@@ -223,9 +223,3 @@ if st.button("🎲 랜덤 음식-술 궁합 보기"):
             f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + "
             f"{rand_top['음료']} = {rand_top['표시점수']}{unit} {rand_emoji}**"
         )
-
-# (선택) 디버그 정보
-with st.expander("🔧 디버그 정보 보기"):
-    st.write("선택된 음식명 열:", food_col)
-    st.write("선택된 점수(술) 열:", drink_cols)
-    st.write("점수 스케일:", "0~1 → % 변환" if use_percent else "원본 점수 사용")
