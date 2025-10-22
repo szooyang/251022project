@@ -5,12 +5,15 @@ import plotly.express as px
 # -------------------------------
 # 데이터 불러오기
 # -------------------------------
-# CSV 인코딩 utf-8-sig로 안전하게 읽기
 food_df = pd.read_csv("food_drink_pairings.csv", encoding="utf-8-sig")
 
-# 음식명 열과 술 컬럼 추출
-food_col = food_df.columns[0]       # B열: 음식명
-drink_cols = food_df.columns[1:]    # C~I열: 소주, 맥주, 와인, 막걸리, 위스키, 칵테일, 사케
+# CSV 구조
+# A열: 음식 범주 (사용 안함)
+# B열: 음식명
+# C~I열: 소주, 맥주, 와인, 막걸리, 위스키, 칵테일, 사케
+
+food_col = food_df.columns[1]       # B열: 음식명
+drink_cols = food_df.columns[2:]    # C~I열: 술 종류
 
 # -------------------------------
 # Streamlit 페이지 설정
@@ -38,7 +41,7 @@ result_df = pd.DataFrame(list(pair_scores.items()), columns=["음료", "궁합 �
 
 # 문자열 → 숫자 변환
 result_df["궁합 점수"] = pd.to_numeric(result_df["궁합 점수"], errors="coerce")
-result_df.dropna(inplace=True)  # 혹시 NaN이 있으면 제거
+result_df.dropna(inplace=True)
 
 # 점수 내림차순 정렬
 result_df = result_df.sort_values(by="궁합 점수", ascending=False)
