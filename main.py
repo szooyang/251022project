@@ -223,3 +223,7 @@ if st.button("🎲 랜덤 음식-술 궁합 보기"):
             f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + "
             f"{rand_top['음료']} = {rand_top['표시점수']}{unit} {rand_emoji}**"
         )
+
+# 음식 선택
+food_choice = st.selectbox("음식을 선택하세요", food_options)
+st.session_state["selected_food"] = food_choice  # ← 추가: 다음 탭에서 사용
