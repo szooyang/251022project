@@ -3,156 +3,181 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
+# ----------------------------------
+# 기본 설정
+# ----------------------------------
 st.set_page_config(page_title="음식-술 궁합 테스트 🍶", page_icon="🍴", layout="centered")
 st.title("🍽️ 음식과 술 궁합 테스트")
 st.write("음식을 선택하면 가장 잘 어울리는 술과 궁합 점수를 보여드립니다!")
 
-# -------------------------------
-# 데이터 불러오기
-# -------------------------------
+# ----------------------------------
+# 유틸
+# ----------------------------------
+def clean_text_series(s: pd.Series) -> pd.Series:
+    """제로폭/NBSP/앞뒤 공백 제거 후 문자열화"""
+    return (
+        s.astype(str)
+         .str.replace("\u200b", "", regex=False)
+         .str.replace("\xa0", " ", regex=False)
+         .str.strip()
+    )
+
+def is_mostly_numeric(series: pd.Series, thresh: float = 0.9) -> bool:
+    """값의 90% 이상이 숫자면 숫자열로 간주"""
+    s = pd.to_numeric(series, errors="coerce")
+    return s.notna().mean() >= thresh
+
+# ----------------------------------
+# 데이터 로드
+# ----------------------------------
 @st.cache_data
-def load_data(path: str) -> pd.DataFrame:
-    # utf-8-sig 또는 utf-8 모두 허용
+def load_csv(path: str) -> pd.DataFrame:
     try:
         return pd.read_csv(path, encoding="utf-8-sig")
     except UnicodeError:
         return pd.read_csv(path, encoding="utf-8")
 
-food_df = load_data("food_drink_pairings.csv")
+df = load_csv("food_drink_pairings.csv")
+if df is None or df.empty:
+    st.error("CSV를 불러오지 못했습니다. `food_drink_pairings.csv` 파일을 확인해주세요.")
+    st.stop()
 
-# -------------------------------
+cols = list(df.columns)
+if len(cols) < 2:
+    st.error("CSV에 최소 2개 이상의 열(음식명 + 점수들)이 필요합니다.")
+    st.stop()
+
+# ----------------------------------
 # 음식열/술열 자동 감지
-#  - 케이스1: [대표음식, 소주, 맥주, ...] (스크린샷 형태)
-#  - 케이스2: [범주, 음식명, 소주, 맥주, ...] (A열 범주 존재)
-# -------------------------------
-cols = list(food_df.columns)
+#  - 케이스1: [음식명, 소주, 맥주, ...]
+#  - 케이스2: [범주, 음식명, 소주, 맥주, ...]
+# ----------------------------------
+# 숫자열 판정
+numeric_after_first = all(is_mostly_numeric(df[c]) for c in cols[1:]) if len(cols) > 1 else False
+numeric_after_second = all(is_mostly_numeric(df[c]) for c in cols[2:]) if len(cols) > 2 else False
 
-def _is_all_numeric(series: pd.Series) -> bool:
-    # 90% 이상 숫자면 숫자열로 간주
-    s = pd.to_numeric(series, errors="coerce")
-    return s.notna().mean() >= 0.9
-
-# 후보 1: 첫 열이 음식명이고 나머지는 숫자(술 점수)
-candidate1 = _is_all_numeric(food_df[cols[1]]) if len(cols) > 1 else False
-rest_numeric1 = all(_is_all_numeric(food_df[c]) for c in cols[1:]) if len(cols) > 1 else False
-
-# 후보 2: 두 번째 열이 음식명이고, 세 번째 이후가 숫자(술 점수)
-rest_numeric2 = all(_is_all_numeric(food_df[c]) for c in cols[2:]) if len(cols) > 2 else False
-
-if len(cols) >= 2 and rest_numeric2:
+if numeric_after_second:
     # [범주, 음식명, 점수...]
     food_col = cols[1]
     drink_cols = cols[2:]
-elif len(cols) >= 2 and rest_numeric1:
+elif numeric_after_first:
     # [음식명, 점수...]
     food_col = cols[0]
     drink_cols = cols[1:]
 else:
-    # 폴백: 가장 왼쪽 비(준)숫자열을 음식으로, 나머지 숫자열을 술로
-    non_numeric_cols = [c for c in cols if not _is_all_numeric(food_df[c])]
-    numeric_cols = [c for c in cols if _is_all_numeric(food_df[c])]
-    if not non_numeric_cols or not numeric_cols:
-        st.error("CSV 열 구조를 파악할 수 없습니다. (왼쪽에 음식명, 오른쪽에 점수들이 오도록 해주세요)")
+    # 폴백: 왼쪽에서 비(준)숫자열 하나 + 오른쪽 숫자열들
+    non_numeric = [c for c in cols if not is_mostly_numeric(df[c])]
+    numeric = [c for c in cols if is_mostly_numeric(df[c])]
+    if not non_numeric or not numeric:
+        st.error("CSV 열 구조를 파악할 수 없습니다. 왼쪽에 음식명, 오른쪽에 숫자 점수들이 오도록 정리해주세요.")
         st.stop()
-    food_col = non_numeric_cols[0]
-    drink_cols = numeric_cols
+    food_col = non_numeric[0]
+    drink_cols = numeric
+
+# 문자열 정규화 컬럼
+df["_food_norm"] = clean_text_series(df[food_col])
 
 # 점수형으로 강제 변환
 for c in drink_cols:
-    food_df[c] = pd.to_numeric(food_df[c], errors="coerce")
+    df[c] = pd.to_numeric(df[c], errors="coerce")
 
-# -------------------------------
 # 스케일 자동 감지 (0~1 → %로 환산)
-# -------------------------------
-max_val = np.nanmax(food_df[drink_cols].values)
-use_percent = (max_val <= 1.0)  # 1.0 이하이면 0~1 스케일로 판단
+max_val = float(np.nanmax(df[drink_cols].values)) if len(drink_cols) else np.nan
+use_percent = (max_val <= 1.0)  # 1.0 이하이면 0~1 스케일
 scale = 100.0 if use_percent else 1.0
-y_max = 100.0 if use_percent else float(np.nanmax(food_df[drink_cols].values) * 1.05)
-
-def fmt(v: float) -> str:
-    if pd.isna(v):
-        return "N/A"
-    return f"{v*scale:.2f}" if use_percent else f"{v:.2f}"
-
-# -------------------------------
-# 음식 선택
-# -------------------------------
-food_choice = st.selectbox("음식을 선택하세요", food_df[food_col].dropna().astype(str).unique())
-
-selected_food_row = food_df[food_df[food_col] == food_choice].iloc[0]
-
-# -------------------------------
-# 궁합 점수 계산 및 정렬
-# -------------------------------
-pair_scores = selected_food_row[drink_cols].to_dict()
-result_df = pd.DataFrame(list(pair_scores.items()), columns=["음료", "원시점수"])
-result_df["점수(표시용)"] = (result_df["원시점수"] * scale).round(2)
-result_df = result_df.dropna(subset=["원시점수"]).sort_values(by="원시점수", ascending=False)
-
-# -------------------------------
-# 1위 추천
-# -------------------------------
-top = result_df.iloc[0]
 unit = "%" if use_percent else "점"
-st.markdown(f"### 🥇 가장 잘 어울리는 음료: **{top['음료']} ({top['점수(표시용)']}{unit})**")
 
-# -------------------------------
-# 전체 점수 테이블
-# -------------------------------
+# ----------------------------------
+# UI: 음식 선택
+# ----------------------------------
+options = df["_food_norm"].dropna().unique()
+if len(options) == 0:
+    st.error("음식명 열이 비어있습니다. CSV를 확인해주세요.")
+    st.stop()
+
+food_choice = st.selectbox("음식을 선택하세요", options)
+
+# 선택 매칭 (안전 가드)
+match = df[df["_food_norm"] == food_choice]
+if match.empty:
+    st.error("선택한 음식명을 찾지 못했습니다. CSV의 음식명에 숨은 문자가 있는지 확인해주세요.")
+    st.stop()
+selected = match.iloc[0]
+
+# ----------------------------------
+# 궁합 계산/정렬
+# ----------------------------------
+pair_scores = selected[drink_cols].to_dict()
+result_df = (
+    pd.DataFrame(list(pair_scores.items()), columns=["음료", "원시점수"])
+      .dropna(subset=["원시점수"])
+      .assign(표시점수=lambda x: (x["원시점수"] * scale).round(2))
+      .sort_values("원시점수", ascending=False)
+      .reset_index(drop=True)
+)
+
+if result_df.empty:
+    st.warning("선택한 음식의 점수 데이터가 없습니다.")
+    st.stop()
+
+# 1위 추천
+top = result_df.iloc[0]
+st.markdown(f"### 🥇 가장 잘 어울리는 음료: **{top['음료']} ({top['표시점수']}{unit})**")
+
+# 전체 표
 st.subheader("🍹 전체 술 궁합 점수")
-show_df = result_df[["음료", "점수(표시용)"]].reset_index(drop=True)
-show_df = show_df.rename(columns={"점수(표시용)": f"궁합 점수 ({unit})"})
-st.dataframe(show_df, use_container_width=True)
+st.dataframe(result_df[["음료", "표시점수"]].rename(columns={"표시점수": f"궁합 점수 ({unit})"}), use_container_width=True)
 
-# -------------------------------
-# 막대그래프 + 이모지
-# -------------------------------
+# ----------------------------------
+# 시각화
+# ----------------------------------
 emoji_map = {
-    "소주": "🍶",
-    "맥주": "🍺",
-    "와인": "🍷",
-    "막걸리": "🥛",
-    "위스키": "🥃",
-    "칵테일": "🍸",
-    "사케": "🍶"
+    "소주": "🍶", "맥주": "🍺", "와인": "🍷", "막걸리": "🥛",
+    "위스키": "🥃", "칵테일": "🍸", "사케": "🍶"
 }
 
+ymax_disp = float(result_df["표시점수"].max())
 fig = px.bar(
     result_df,
     x="음료",
-    y="점수(표시용)",
-    color="점수(표시용)",
-    range_y=[0, max(1.0, y_max if use_percent else y_max)],  # 자동 상한
-    labels={"점수(표시용)": f"궁합 점수 ({unit})"},
+    y="표시점수",
+    color="표시점수",
+    range_y=[0, ymax_disp * 1.15 if ymax_disp > 0 else 1],
+    labels={"표시점수": f"궁합 점수 ({unit})"},
     title=f"🍸 술 궁합 점수 ({unit})"
 )
 
-# 이모지 주석 위치 보정 (퍼센트면 +3, 원점수면 전체의 +5%)
-offset = 3.0 if use_percent else max(1.0, y_max * 0.05)
+# 이모지 주석 (퍼센트면 +3, 원점수면 +max*5%)
+offset = 3.0 if use_percent else max(1.0, ymax_disp * 0.05)
 for row in result_df.itertuples():
     emoji = emoji_map.get(row.음료, "🍹")
     fig.add_annotation(
         x=row.음료,
-        y=row._2 + offset,  # _2는 "점수(표시용)"의 위치 (itertuples 인덱스: 0:Index, 1:음료, 2:원시점수, 3:점수(표시용))
+        y=row.표시점수 + offset,
         text=emoji,
         showarrow=False,
         font=dict(size=24),
         xanchor="center"
     )
 
-fig.update_layout(template="plotly_white", height=500)
+fig.update_layout(template="plotly_white", height=520)
 st.plotly_chart(fig, use_container_width=True)
 
-# -------------------------------
-# 랜덤 음식-술 궁합 버튼
-# -------------------------------
+# ----------------------------------
+# 랜덤 궁합 버튼
+# ----------------------------------
 if st.button("🎲 랜덤 음식-술 궁합 보기"):
-    random_food_row = food_df.sample(1).iloc[0]
-    random_pair_scores = random_food_row[drink_cols].to_dict()
-    rand_df = pd.DataFrame(list(random_pair_scores.items()), columns=["음료", "원시점수"]).dropna()
-    rand_df["점수(표시용)"] = (rand_df["원시점수"] * scale).round(2)
-    rand_df = rand_df.sort_values(by="원시점수", ascending=False)
-    rand_top = rand_df.iloc[0]
-    st.markdown(
-        f"**{random_food_row[food_col]} + {rand_top['음료']} = {rand_top['점수(표시용)']}{unit} 🍷**"
+    rand_row = df.sample(1).iloc[0]
+    rand_scores = rand_row[drink_cols].to_dict()
+    rand_df = (
+        pd.DataFrame(list(rand_scores.items()), columns=["음료", "원시점수"])
+          .dropna(subset=["원시점수"])
+          .assign(표시점수=lambda x: (x["원시점수"] * scale).round(2))
+          .sort_values("원시점수", ascending=False)
+          .reset_index(drop=True)
     )
+    if rand_df.empty:
+        st.info("랜덤 선택 결과에 점수 데이터가 없습니다. 다른 항목으로 시도해주세요.")
+    else:
+        rand_top = rand_df.iloc[0]
+        st.markdown(f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + {rand_top['음료']} = {rand_top['표시점수']}{unit} 🍷**")
