@@ -30,7 +30,6 @@ def mostly_numeric(series: pd.Series, thresh: float = 0.9) -> bool:
 def guess_food_and_drinks(df: pd.DataFrame):
     """
     음식열/술열 자동 감지
-    우선순위:
       1) 헤더 키워드 우선 ('대표음식','음식','음식명','Food','Dish' 등)
       2) [범주, 음식명, 점수...] 패턴
       3) [음식명, 점수...] 패턴
@@ -166,7 +165,7 @@ st.markdown(f"### 🥇 가장 잘 어울리는 음료: **{top['음료']} ({top['
 # ==============================
 st.subheader("🍹 전체 술 궁합 점수")
 display_df = result_df[["음료", "표시점수"]].rename(columns={"표시점수": f"궁합 점수 ({unit})"})
-display_df.index = np.arange(1, len(display_df) + 1)   # ← 여기서 1부터 시작
+display_df.index = np.arange(1, len(display_df) + 1)
 st.dataframe(display_df, use_container_width=True)
 
 # ==============================
@@ -203,7 +202,7 @@ fig.update_layout(template="plotly_white", height=520)
 st.plotly_chart(fig, use_container_width=True)
 
 # ==============================
-# 랜덤 버튼
+# 랜덤 버튼 (술별 이모지 적용)
 # ==============================
 if st.button("🎲 랜덤 음식-술 궁합 보기"):
     rand_row = df.sample(1).iloc[0]
@@ -219,6 +218,14 @@ if st.button("🎲 랜덤 음식-술 궁합 보기"):
         st.info("랜덤 선택 결과에 점수 데이터가 없습니다. 다른 항목으로 시도해주세요.")
     else:
         rand_top = rand_df.iloc[0]
+        rand_emoji = emoji_map.get(rand_top["음료"], "🍹")  # ← 술에 맞는 이모지
         st.markdown(
-            f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + {rand_top['음료']} = {rand_top['표시점수']}{unit} 🍷**"
+            f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + "
+            f"{rand_top['음료']} = {rand_top['표시점수']}{unit} {rand_emoji}**"
         )
+
+# (선택) 디버그 정보
+with st.expander("🔧 디버그 정보 보기"):
+    st.write("선택된 음식명 열:", food_col)
+    st.write("선택된 점수(술) 열:", drink_cols)
+    st.write("점수 스케일:", "0~1 → % 변환" if use_percent else "원본 점수 사용")
