@@ -46,13 +46,10 @@ def guess_food_and_drinks(df: pd.DataFrame):
     for key in keywords_lower:
         if key in header_lower_to_orig:
             cand = header_lower_to_orig[key]
-            # cand 오른쪽의 열이 대부분 숫자면 베스트
             start_idx = cols.index(cand)
             right_cols = cols[start_idx + 1 :]
             if right_cols and all(mostly_numeric(df[c]) for c in right_cols):
                 return cand, right_cols
-            # 혹시 오른쪽이 섞여 있어도 cand가 음식명일 확률이 높으니
-            # 오른쪽에서 숫자열만 추려서 반환
             drink_cols = [c for c in right_cols if mostly_numeric(df[c])]
             if drink_cols:
                 return cand, drink_cols
@@ -68,8 +65,7 @@ def guess_food_and_drinks(df: pd.DataFrame):
         if (not mostly_numeric(df[cols[0]])) and all(mostly_numeric(df[c]) for c in cols[1:]):
             return cols[0], cols[1:]
 
-    # 4) 폴백: 텍스트성이 높고 유니크 비율이 높은 열을 음식으로,
-    #    그 오른쪽에서 숫자열만 술로 선택
+    # 4) 폴백
     text_like = []
     for c in cols:
         is_texty = not mostly_numeric(df[c])
@@ -165,12 +161,13 @@ if result_df.empty:
 top = result_df.iloc[0]
 st.markdown(f"### 🥇 가장 잘 어울리는 음료: **{top['음료']} ({top['표시점수']}{unit})**")
 
-# 표
+# ==============================
+# 표(인덱스를 1부터 시작)
+# ==============================
 st.subheader("🍹 전체 술 궁합 점수")
-st.dataframe(
-    result_df[["음료", "표시점수"]].rename(columns={"표시점수": f"궁합 점수 ({unit})"}),
-    use_container_width=True
-)
+display_df = result_df[["음료", "표시점수"]].rename(columns={"표시점수": f"궁합 점수 ({unit})"})
+display_df.index = np.arange(1, len(display_df) + 1)   # ← 여기서 1부터 시작
+st.dataframe(display_df, use_container_width=True)
 
 # ==============================
 # 시각화
