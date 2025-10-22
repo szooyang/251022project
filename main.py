@@ -31,23 +31,31 @@ def guess_food_and_drinks(df: pd.DataFrame):
     """
     음식열/술열 자동 감지
     우선순위:
-      1) 헤더 키워드 매칭 ('대표음식','음식','음식명','Food','Dish' 등)
+      1) 헤더 키워드 우선 ('대표음식','음식','음식명','Food','Dish' 등)
       2) [범주, 음식명, 점수...] 패턴
       3) [음식명, 점수...] 패턴
-      4) 왼쪽에서 가장 텍스트스러우며 유니크 비율이 높은 열
+      4) 폴백: 텍스트성/유니크 비율 기반
     """
     cols = list(df.columns)
 
     # 1) 헤더 키워드 우선
-    food_keywords = {"대표음식", "음식", "음식명", "메뉴", "Food", "food", "Dish", "dish"}
-    header_lower = {c.lower(): c for c in cols}
-    for key in list(food_keywords) | {k.lower() for k in food_keywords}:
-        if key in header_lower:
-            cand = header_lower[key]
-            # cand 오른쪽이 대부분 숫자면 이상적
-            right_cols = [c for c in cols[cols.index(cand)+1:]]
+    food_keywords = {"대표음식", "음식", "음식명", "메뉴", "Food", "Dish"}
+    keywords_lower = {k.lower() for k in food_keywords}
+    header_lower_to_orig = {c.lower(): c for c in cols}
+
+    for key in keywords_lower:
+        if key in header_lower_to_orig:
+            cand = header_lower_to_orig[key]
+            # cand 오른쪽의 열이 대부분 숫자면 베스트
+            start_idx = cols.index(cand)
+            right_cols = cols[start_idx + 1 :]
             if right_cols and all(mostly_numeric(df[c]) for c in right_cols):
                 return cand, right_cols
+            # 혹시 오른쪽이 섞여 있어도 cand가 음식명일 확률이 높으니
+            # 오른쪽에서 숫자열만 추려서 반환
+            drink_cols = [c for c in right_cols if mostly_numeric(df[c])]
+            if drink_cols:
+                return cand, drink_cols
 
     # 2) [범주, 음식명, 점수...] 패턴
     if len(cols) >= 3:
@@ -60,7 +68,7 @@ def guess_food_and_drinks(df: pd.DataFrame):
         if (not mostly_numeric(df[cols[0]])) and all(mostly_numeric(df[c]) for c in cols[1:]):
             return cols[0], cols[1:]
 
-    # 4) 폴백: 왼쪽에서 텍스트성이 높고 유니크 비율이 높은 열을 음식으로,
+    # 4) 폴백: 텍스트성이 높고 유니크 비율이 높은 열을 음식으로,
     #    그 오른쪽에서 숫자열만 술로 선택
     text_like = []
     for c in cols:
@@ -68,19 +76,17 @@ def guess_food_and_drinks(df: pd.DataFrame):
         uniq_ratio = df[c].nunique(dropna=True) / max(1, len(df))
         avg_len = clean_text_series(df[c]).str.len().fillna(0).mean()
         text_like.append((c, is_texty, uniq_ratio, avg_len))
-    # 텍스트 & 유니크>0.3 & 평균길이>=2 를 우선, 좌->우 정렬
     candidates = [c for (c, is_text, u, L) in text_like if is_text and u >= 0.3 and L >= 2]
     if not candidates:
-        # 그래도 없으면 첫 비(준)숫자열
         candidates = [c for (c, is_text, _, _) in text_like if is_text]
     if not candidates:
         raise ValueError("음식명 후보 열을 찾을 수 없습니다.")
 
     food_col = candidates[0]
-    right_cols = [c for c in cols[cols.index(food_col)+1:]]
+    start_idx = cols.index(food_col)
+    right_cols = cols[start_idx + 1 :]
     drink_cols = [c for c in right_cols if mostly_numeric(df[c])]
     if not drink_cols:
-        # 전체에서 숫자열 수집 (최후의 보루)
         drink_cols = [c for c in cols if c != food_col and mostly_numeric(df[c])]
     if not drink_cols:
         raise ValueError("점수(숫자) 열을 찾지 못했습니다.")
@@ -96,7 +102,6 @@ def load_csv(path: str) -> pd.DataFrame:
             return pd.read_csv(path, encoding=enc)
         except Exception:
             continue
-    # 마지막 시도: 인코딩 자동 추정 실패 시 기본 읽기
     return pd.read_csv(path)
 
 df = load_csv("food_drink_pairings.csv")
@@ -126,8 +131,7 @@ unit = "%" if use_percent else "점"
 # UI: 음식 선택 (문자열만)
 # ==============================
 food_options = df["_food_norm"].dropna().astype(str).unique()
-food_options = [x for x in food_options if x != "" and x.lower() != "nan"]
-
+food_options = [x for x in food_options if x and x.lower() != "nan"]
 if not food_options:
     st.error("음식명 열이 비어있거나 모두 결측입니다.")
     st.stop()
@@ -163,7 +167,10 @@ st.markdown(f"### 🥇 가장 잘 어울리는 음료: **{top['음료']} ({top['
 
 # 표
 st.subheader("🍹 전체 술 궁합 점수")
-st.dataframe(result_df[["음료", "표시점수"]].rename(columns={"표시점수": f"궁합 점수 ({unit})"}), use_container_width=True)
+st.dataframe(
+    result_df[["음료", "표시점수"]].rename(columns={"표시점수": f"궁합 점수 ({unit})"}),
+    use_container_width=True
+)
 
 # ==============================
 # 시각화
@@ -215,10 +222,6 @@ if st.button("🎲 랜덤 음식-술 궁합 보기"):
         st.info("랜덤 선택 결과에 점수 데이터가 없습니다. 다른 항목으로 시도해주세요.")
     else:
         rand_top = rand_df.iloc[0]
-        st.markdown(f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + {rand_top['음료']} = {rand_top['표시점수']}{unit} 🍷**")
-
-# (선택) 디버그: 자동 인식된 열 정보 확인용
-with st.expander("🔧 디버그 정보 보기"):
-    st.write("선택된 음식명 열:", food_col)
-    st.write("선택된 점수(술) 열:", drink_cols)
-    st.write("점수 스케일:", "0~1 → % 변환" if use_percent else "원본 점수 사용")
+        st.markdown(
+            f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + {rand_top['음료']} = {rand_top['표시점수']}{unit} 🍷**"
+        )
