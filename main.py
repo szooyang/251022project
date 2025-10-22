@@ -123,7 +123,7 @@ scale = 100.0 if use_percent else 1.0
 unit = "%" if use_percent else "점"
 
 # ==============================
-# UI: 음식 선택 (문자열만)
+# UI: 음식 선택 (문자열만, 고유 key)
 # ==============================
 food_options = df["_food_norm"].dropna().astype(str).unique()
 food_options = [x for x in food_options if x and x.lower() != "nan"]
@@ -131,7 +131,9 @@ if not food_options:
     st.error("음식명 열이 비어있거나 모두 결측입니다.")
     st.stop()
 
-food_choice = st.selectbox("음식을 선택하세요", food_options)
+# 🔑 고유 key로 중복 방지
+food_choice = st.selectbox("음식을 선택하세요", food_options, key="food_select_main")
+st.session_state["selected_food"] = food_choice  # 다른 페이지에서 활용
 
 # 안전 매칭
 row = df[df["_food_norm"] == food_choice]
@@ -166,7 +168,7 @@ st.markdown(f"### 🥇 가장 잘 어울리는 음료: **{top['음료']} ({top['
 st.subheader("🍹 전체 술 궁합 점수")
 display_df = result_df[["음료", "표시점수"]].rename(columns={"표시점수": f"궁합 점수 ({unit})"})
 display_df.index = np.arange(1, len(display_df) + 1)
-st.dataframe(display_df, use_container_width=True)
+st.dataframe(display_df, use_container_width=True, key="table_main_scores")
 
 # ==============================
 # 시각화
@@ -199,12 +201,12 @@ for r in result_df.itertuples():
     )
 
 fig.update_layout(template="plotly_white", height=520)
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True, key="bar_main_chart")
 
 # ==============================
 # 랜덤 버튼 (술별 이모지 적용)
 # ==============================
-if st.button("🎲 랜덤 음식-술 궁합 보기"):
+if st.button("🎲 랜덤 음식-술 궁합 보기", key="btn_random_pair"):
     rand_row = df.sample(1).iloc[0]
     rand_scores = rand_row[drink_cols].to_dict()
     rand_df = (
@@ -218,12 +220,14 @@ if st.button("🎲 랜덤 음식-술 궁합 보기"):
         st.info("랜덤 선택 결과에 점수 데이터가 없습니다. 다른 항목으로 시도해주세요.")
     else:
         rand_top = rand_df.iloc[0]
-        rand_emoji = emoji_map.get(rand_top["음료"], "🍹")  # ← 술에 맞는 이모지
+        rand_emoji = emoji_map.get(rand_top["음료"], "🍹")
         st.markdown(
             f"**{clean_text_series(pd.Series([rand_row[food_col]])).iloc[0]} + "
             f"{rand_top['음료']} = {rand_top['표시점수']}{unit} {rand_emoji}**"
         )
 
-# 음식 선택
-food_choice = st.selectbox("음식을 선택하세요", food_options)
-st.session_state["selected_food"] = food_choice  # ← 추가: 다음 탭에서 사용
+# (선택) 디버그 정보
+with st.expander("🔧 디버그 정보 보기", expanded=False):
+    st.write("선택된 음식명 열:", food_col)
+    st.write("선택된 점수(술) 열:", drink_cols)
+    st.write("점수 스케일:", "0~1 → % 변환" if use_percent else "원본 점수 사용")
