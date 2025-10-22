@@ -51,11 +51,37 @@ result_df = result_df.sort_values(by="궁합 점수", ascending=False)
 # -------------------------------
 top_drink = result_df.iloc[0]
 st.markdown(f"### 🥇 가장 잘 어울리는 음료: **{top_drink['음료']} ({top_drink['궁합 점수']}점)**")
-
+emoji_map = {
+  "소주": "🍶"
+  "맥주": "🍺",
+  "와인": "🍷",
+  "막걸리": "🥛",
+  "위스키": "🥃",
+  "칵테일": "🍸",
+  "사케": "🍶"
+}
 st.subheader("🍹 전체 술 궁합 점수")
 st.dataframe(result_df.reset_index(drop=True))
 
 fig = px.bar(result_df, x="음료", y="궁합 점수", color="궁합 점수", range_y=[0,100])
+for i, row in enumerate(result_df.itertuples()):
+     emoji = emoji_map.get(row.음료, "🍹")
+     fig.add_annotation(
+     x=row.음료,
+     y=row.궁합_점수 + 3,
+     text=emoji,
+     showarrow=False,
+     font=dict(size=24),
+         xanchor="center"
+     )
+
+ fig.update_layout(
+     title="🍸 술 궁합 점수 + 이모지 표시",
+     xaxis_title="음료",
+     yaxis_title="궁합 점수",
+     template="plotly_white",
+     height=500
+ )
 st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------
