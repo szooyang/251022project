@@ -54,7 +54,7 @@ st.markdown("---")
 
 if analysis_mode == "음식 먼저 (Food First)":
     # ----------------------------------------------------
-    # A. '음식 먼저' 모드 (기존 로직)
+    # A. '음식 먼저' 모드 (기존 로직: 음식 -> 술, 세로 막대)
     # ----------------------------------------------------
     st.header("🍴 음식 기반 최고의 술 추천")
 
@@ -62,31 +62,30 @@ if analysis_mode == "음식 먼저 (Food First)":
     food = st.selectbox("2. 추천을 원하는 대표 음식을 선택하세요:", df["대표음식"].unique())
 
     # --- 선택한 음식 데이터 필터링 ---
-    # .iloc[0]로 한 행(Series)을 가져옴
     row = df[df["대표음식"] == food].iloc[0]
 
     # --- 이모지와 함께 데이터 구성 ---
     chart_data = []
     for d in DRINKS:
-        # 이모지를 딕셔너리에서 찾아 적용
         emoji = EMOJIS_DRINKS.get(d, "❓")
         chart_data.append({
-            "술": f"{emoji} {d}",
+            "항목": f"{emoji} {d}", # Y축 항목 (술)
             "비율": row[d],
-            "정렬용_비율": row[d] # 정렬을 위해 순수 비율을 따로 저장
+            "정렬용_비율": row[d] 
         })
         
     chart_df = pd.DataFrame(chart_data).sort_values("정렬용_비율", ascending=False)
     
+    # 차트 변수 설정
+    x_col = "항목" 
     y_col = "비율"
-    x_col = "술"
     main_item = food
     chart_title = f"'{main_item}'과(와) 어울리는 술 비율 🍷"
-    best_item = chart_df.iloc[0]["술"]
+    best_item = chart_df.iloc[0]["항목"]
     
 else:
     # ----------------------------------------------------
-    # B. '술 먼저' 모드 (새로운 로직)
+    # B. '술 먼저' 모드 (수정된 로직: 술 -> 음식, 세로 막대)
     # ----------------------------------------------------
     st.header("🥂 술 기반 최고의 음식 추천")
 
@@ -99,37 +98,38 @@ else:
         ascending=False
     ).head(TOP_N_FOOD)
 
-    # 차트 구성을 위한 DataFrame 이름 통일
+    # 차트 구성을 위한 DataFrame 이름 통일 (세로 막대를 위해)
     chart_df = recommend_df.copy()
-    chart_df.columns = ["술", "비율"] # '대표음식'을 '술' 컬럼으로 임시 변경하여 통합 차트 로직에 맞춤
-    chart_df["정렬용_비율"] = chart_df["비율"] # 정렬용 비율 컬럼 추가
+    chart_df.columns = ["항목", "비율"] # X축 항목 (대표음식)
+    chart_df["정렬용_비율"] = chart_df["비율"] 
     
-    y_col = "술" # 가로 막대를 위해 축 전환
-    x_col = "비율"
+    # 차트 변수 설정
+    x_col = "항목" 
+    y_col = "비율"
     main_item = selected_drink
     chart_title = f"'{main_item}'과(와) 잘 어울리는 음식 ({TOP_N_FOOD}가지) 🍽️"
-    best_item = chart_df.iloc[0]["술"] # '술' 컬럼에 현재는 '대표음식' 이름이 들어있음
+    best_item = chart_df.iloc[0]["항목"] # '항목' 컬럼에 현재는 '대표음식' 이름이 들어있음
 
 # ----------------------------------------------------
-# 3. 공통 Plotly 시각화 로직
+# 3. 공통 Plotly 시각화 로직 (항상 세로 막대)
 # ----------------------------------------------------
 
 if not chart_df.empty:
     # --- 색상 설정 (1등 빨강 + 그라데이션) ---
-    # 가장 높은 비율의 막대만 빨간색(#FF4B4B)으로 설정
+    # 비율이 가장 높은 막대만 빨간색(#FF4B4B)으로 설정
     colors = ["#FF4B4B"] + px.colors.sequential.Oranges[2:len(chart_df)]
     colors = colors[:len(chart_df)]
 
-    # Plotly 막대그래프 생성
+    # Plotly 막대그래프 생성 (세로 막대: orientation='v')
     fig = px.bar(
         chart_df,
-        x=x_col,
-        y=y_col,
+        x=x_col, # 술(Food First) 또는 음식(Drink First)
+        y=y_col, # 비율
         text="비율",
-        color=y_col if analysis_mode == "음식 먼저 (Food First)" else x_col, # 색상 구분을 술 또는 음식 이름으로
+        color="항목", # 항목별로 다른 색상 적용
         color_discrete_sequence=colors,
         title=chart_title,
-        orientation='v' if analysis_mode == "음식 먼저 (Food First)" else 'h' # 분석 모드에 따라 가로/세로 변경
+        orientation='v' 
     )
 
     fig.update_traces(
@@ -137,26 +137,16 @@ if not chart_df.empty:
         textposition="outside"
     )
 
-    # 레이아웃 설정
-    layout_settings = {
-        "showlegend": False,
-        "title_x": 0.5,
-        "plot_bgcolor": "rgba(0,0,0,0)",
-        "font": dict(size=14)
-    }
-
-    if analysis_mode == "음식 먼저 (Food First)":
-        # 세로 막대 설정
-        layout_settings["yaxis_range"] = [0, 1.1]
-        layout_settings["xaxis"] = dict(showgrid=False)
-        layout_settings["yaxis"] = dict(showgrid=False, title="궁합 비율")
-        fig.update_layout(**layout_settings)
-    else:
-        # 가로 막대 설정
-        layout_settings["xaxis_range"] = [0, 1.1]
-        layout_settings["xaxis"] = dict(showgrid=False, title="궁합 비율")
-        layout_settings["yaxis"] = dict(showgrid=False, title="추천 음식", autorange="reversed")
-        fig.update_layout(**layout_settings)
+    # 레이아웃 설정 (세로 막대 공통)
+    fig.update_layout(
+        yaxis_range=[0, 1.1],
+        showlegend=False,
+        title_x=0.5,
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, title=x_col),
+        yaxis=dict(showgrid=False, title="궁합 비율"),
+        font=dict(size=14)
+    )
 
     # --- 그래프 출력 ---
     st.plotly_chart(fig, use_container_width=True)
