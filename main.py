@@ -23,8 +23,8 @@ food_list = df["대표음식"].unique()
 selected_food = st.selectbox("대표 음식을 선택하세요:", food_list)
 
 # 데이터 필터링
-food_data = df[df["음식"] == selected_food].melt(
-    id_vars=["음식"], var_name="술 종류", value_name="비율"
+food_data = df[df["대표음식"] == selected_food].melt(
+    id_vars=["대표음식"], var_name="술 종류", value_name="비율"
 )
 food_data = food_data.sort_values("비율", ascending=False)
 
