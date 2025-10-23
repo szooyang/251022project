@@ -10,7 +10,7 @@ def load_data():
 
 df = load_data()
 
-st.set_page_config(page_title="음식과 술 궁합 시각화", page_icon="🍶", layout="centered")
+st.set_page_config(page_title="🍶 음식과 술 궁합 시각화", page_icon="🍽️", layout="centered")
 
 # --- 제목 ---
 st.title("🍽️ 음식과 술 궁합 시각화 대시보드")
@@ -22,17 +22,17 @@ food = st.selectbox("대표 음식을 선택하세요:", df["대표음식"].uniq
 # --- 선택한 음식 데이터 필터링 ---
 row = df[df["대표음식"] == food].iloc[0]
 drinks = ["소주", "맥주", "와인", "막걸리", "위스키", "칵테일", "사케"]
-values = row[drinks].values
+emojis = ["🍶", "🍺", "🍷", "🥛", "🥃", "🍸", "🍶"]
 
-# --- 데이터프레임 변환 ---
+# --- 이모지와 함께 데이터 구성 ---
 chart_df = pd.DataFrame({
-    "술": drinks,
-    "비율": values
+    "술": [f"{emoji} {drink}" for emoji, drink in zip(emojis, drinks)],
+    "비율": [row[d] for d in drinks]
 }).sort_values("비율", ascending=False)
 
-# --- 색상 설정 ---
-colors = ["#FF4B4B"] + px.colors.sequential.Oranges[len(chart_df)-1:]
-colors = colors[:len(chart_df)]  # 데이터 개수만큼 자르기
+# --- 색상 설정 (1등 빨강 + 그라데이션) ---
+colors = ["#FF4B4B"] + px.colors.sequential.Oranges[len(chart_df) - 1:]
+colors = colors[:len(chart_df)]
 
 # --- Plotly 막대그래프 ---
 fig = px.bar(
@@ -42,7 +42,7 @@ fig = px.bar(
     text="비율",
     color="술",
     color_discrete_sequence=colors,
-    title=f"'{food}'과(와) 어울리는 술 비율",
+    title=f"'{food}'과(와) 어울리는 술 비율 🍷",
 )
 
 fig.update_traces(
@@ -56,10 +56,13 @@ fig.update_layout(
     plot_bgcolor="rgba(0,0,0,0)",
     xaxis=dict(showgrid=False),
     yaxis=dict(showgrid=False),
+    font=dict(size=16)
 )
 
 # --- 그래프 출력 ---
 st.plotly_chart(fig, use_container_width=True)
 
 # --- 부가 정보 ---
-st.markdown("💡 *Tip: 막대 위를 클릭하면 다른 술과 비교해보거나 확대할 수 있습니다.*")
+best = chart_df.iloc[0]["술"]
+st.markdown(f"🥇 **'{food}'에는 {best}가(이) 가장 잘 어울립니다!**")
+st.markdown("💡 *Tip: 막대 위를 클릭하면 다른 술과 비교하거나 확대해볼 수 있습니다.*")
