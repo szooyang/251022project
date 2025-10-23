@@ -19,7 +19,7 @@ drink_emojis = {
 }
 
 # 음식 선택
-food_list = df["음식"].unique()
+food_list = df["대표음식"].unique()
 selected_food = st.selectbox("대표 음식을 선택하세요:", food_list)
 
 # 데이터 필터링
