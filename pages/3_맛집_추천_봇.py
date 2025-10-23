@@ -1,249 +1,230 @@
 # pages/3_맛집_추천_봇.py
-import time
 import json
-import re
-import difflib
-import requests
+import time
 import pandas as pd
 import streamlit as st
-from urllib.parse import quote_plus
 
-# ============== 기본 세팅 ==============
-st.set_page_config(page_title="맛집 추천 봇 – 리얼서치", page_icon="🔎", layout="wide")
-st.title("🔎 맛집 추천 봇 — 리얼서치 기반 (거짓 제로 지향)")
-st.caption("실시간 검색 결과로만 추천합니다. (카카오 키가 있으면 사용, 없으면 키 없이도 동작)")
-
-OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", "")
-KAKAO_KEY  = st.secrets.get("KAKAO_REST_KEY", "")
-
-# OpenAI (요약/코멘트 전용)
+# OpenAI SDK (v1.x)
 try:
     from openai import OpenAI
-    _openai_ok = True
 except Exception:
-    _openai_ok = False
+    OpenAI = None
 
-# ============== 컨트롤 ==============
+st.set_page_config(page_title="맛집 추천 봇", page_icon="🤖", layout="wide")
+st.title("🤖 맛집 추천 봇 — OpenAI 키만 있으면 바로 GO!")
+st.caption("키워드와 취향 입력 → AI가 동네/음식/무드 맞춘 맛집 아이디어를 뽑아줘요. (실시간 크롤링 X, 아이디어/초안 용)")
+
+# -------------------------------------------------------------------
+# 0) OpenAI 키: 시크릿에서만 읽기 (입력칸 제거)
+# -------------------------------------------------------------------
+DEFAULT_MODEL = "gpt-4o-mini"
+api_key = st.secrets.get("OPENAI_API_KEY", "")
+
+if not api_key:
+    st.error("OpenAI API 키가 설정되어 있지 않습니다. Streamlit Secrets에 `OPENAI_API_KEY`를 추가해주세요.")
+    st.stop()
+
+model = st.selectbox("모델 선택", [DEFAULT_MODEL, "gpt-4o", "gpt-4.1-mini"], index=0, key="model_select")
+temperature = st.slider("창의성(temperature)", 0.0, 1.2, 0.8, 0.1, key="temp_slider")
+
+if "chat" not in st.session_state:
+    st.session_state.chat = []
+if "last_results" not in st.session_state:
+    st.session_state.last_results = pd.DataFrame()
+
+# -------------------------------------------------------------------
+# 1) 컨텍스트 입력(메인 페이지의 음식 선택값 자동 연동)
+# -------------------------------------------------------------------
 default_food = st.session_state.get("selected_food", "")
 SEOUL_GU = [
     "강남구","강동구","강북구","강서구","관악구","광진구","구로구","금천구","노원구","도봉구",
     "동대문구","동작구","마포구","서대문구","서초구","성동구","성북구","송파구","양천구","영등포구",
     "용산구","은평구","종로구","중구","중랑구"
 ]
-c1, c2, c3 = st.columns([1,1,1])
-with c1:
-    gu = st.selectbox("서울 **구**", SEOUL_GU, index=SEOUL_GU.index("강남구"))
-with c2:
-    food = st.text_input("음식/키워드", value=str(default_food) or "비빔밥")
-with c3:
-    topk = st.slider("최대 추천 수", 3, 10, 5)
 
-go = st.button("실시간으로 찾기 🚀", use_container_width=True)
+with st.expander("🎛️ 추천 조건 세팅", expanded=True):
+    c1, c2, c3 = st.columns([1,1,1])
+    with c1:
+        gu = st.selectbox("서울 **구**", SEOUL_GU, index=SEOUL_GU.index("강남구"), key="bot_gu")
+    with c2:
+        food = st.text_input("음식/키워드", value=str(default_food) or "비빔밥", key="bot_food")
+    with c3:
+        group_size = st.selectbox("인원", ["1-2명","3-4명","5-6명","7명 이상"], index=1, key="bot_group")
+
+    c4, c5, c6 = st.columns([1,1,1])
+    with c4:
+        budget = st.select_slider("1인 예산", options=["<1만", "1~2만", "2~3만", "3~5만", "5만+"], value="1~2만", key="bot_budget")
+    with c5:
+        vibe = st.multiselect("무드", ["캐주얼","조용함","데이트","단체","술집","가성비","프리미엄"], default=["캐주얼"], key="bot_vibe")
+    with c6:
+        diet = st.multiselect("제한", ["매운맛 기피","채식","돼지고기 제외","소고기 제외","해산물 제외","견과류 알레르기"], key="bot_diet")
+
+    c7, c8 = st.columns([1,1])
+    with c7:
+        need_reservation = st.checkbox("예약 편한 곳이면 좋음", value=False, key="bot_reserve")
+    with c8:
+        include_chains = st.checkbox("체인점도 OK", value=True, key="bot_chain")
+
 st.write("---")
 
-# ============== 수집기 ==============
+# -------------------------------------------------------------------
+# 2) 시스템 프롬프트 (구조화 JSON)
+# -------------------------------------------------------------------
+SYSTEM_PROMPT = """\
+You are a restaurant recommendation assistant for Seoul. You do NOT browse the web.
+Return diverse, plausible suggestions given the user's district and food keyword.
+Respond STRICTLY as compact JSON with this schema:
 
-# 1) Kakao Local (있으면 사용)
-KAKAO_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
-
-def kakao_search_places(rest_key: str, gu: str, food: str, size: int):
-    headers = {"Authorization": f"KakaoAK {rest_key}"}
-    q = f"{gu} {food} 식당"
-    params = {"query": q, "category_group_code": "FD6", "size": size, "page": 1}
-    r = requests.get(KAKAO_URL, headers=headers, params=params, timeout=10)
-    r.raise_for_status()
-    docs = r.json().get("documents", [])
-    out = []
-    for d in docs:
-        out.append({
-            "name": d.get("place_name",""),
-            "road_address": d.get("road_address_name",""),
-            "address": d.get("address_name",""),
-            "phone": d.get("phone",""),
-            "url": d.get("place_url",""),
-            "lat": float(d["y"]) if d.get("y") else None,
-            "lon": float(d["x"]) if d.get("x") else None,
-            "source": "kakao"
-        })
-    return out
-
-# 2) Overpass(키 없이 후보) → 후검증으로 실존 필터
-OVERPASS = "https://overpass-api.de/api/interpreter"
-
-def overpass_candidates(gu: str, food: str, size: int):
-    food_esc = re.sub(r'(["\\])', r"\\\1", food)
-    q = f"""
-    [out:json][timeout:25];
-    area["name:ko"="{gu}"]["boundary"="administrative"]["admin_level"="6"]->.a;
-    (
-      node["amenity"="restaurant"]["name:ko"~"{food_esc}", i](area.a);
-      node["amenity"="restaurant"]["name"~"{food_esc}", i](area.a);
-      node["amenity"="restaurant"]["cuisine"~"{food_esc}", i](area.a);
-      way["amenity"="restaurant"]["name:ko"~"{food_esc}", i](area.a);
-      way["amenity"="restaurant"]["name"~"{food_esc}", i](area.a);
-      way["amenity"="restaurant"]["cuisine"~"{food_esc}", i](area.a);
-    );
-    out center {size*3};   /* 여유로 가져와서 검증단계에서 추림 */
-    """
-    r = requests.post(OVERPASS, data={"data": q}, timeout=30)
-    r.raise_for_status()
-    elements = r.json().get("elements", [])
-    out = []
-    for el in elements:
-        tags = el.get("tags", {})
-        name = tags.get("name:ko") or tags.get("name") or ""
-        addr = tags.get("addr:full") or " ".join(
-            filter(None, [tags.get("addr:city"), tags.get("addr:district"),
-                          tags.get("addr:street"), tags.get("addr:housenumber")])
-        )
-        lat = el.get("lat") or (el.get("center") or {}).get("lat")
-        lon = el.get("lon") or (el.get("center") or {}).get("lon")
-        if name and lat and lon:
-            out.append({
-                "name": name, "road_address": addr, "address": addr,
-                "phone": "", "url": "", "lat": lat, "lon": lon, "source": "osm"
-            })
-    return out[: size*3]
-
-# 3) 네이버 웹검색(일반)으로 실존 검증
-HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                   "AppleWebKit/537.36 (KHTML, like Gecko) "
-                   "Chrome/130.0.0.0 Safari/537.36")
+{
+  "summary": "one-line playful summary in Korean with emojis",
+  "recommendations": [
+    {
+      "name": "string (Korean)",
+      "area_hint": "string (동/로/랜드마크 등 간단 위치 힌트)",
+      "category": "e.g., 한식/일식/중식/아시안/바/디저트",
+      "signature_menu": "대표 메뉴 1-2개",
+      "price_per_person": "예: 1.5만~2.5만",
+      "fit_reason": "why this matches constraints (Korean, casual MZ tone)",
+      "pro_tip": "ordering/seat/wait tips (Korean, short)",
+      "search_query": "네이버/카카오에서 찾기 좋게 만든 한 줄 검색어"
+    }
+  ]
 }
 
-def naver_web_validate(name: str, gu: str, food: str):
-    """네이버 일반 검색 상위 결과에서 상호 포함 여부 확인 후 링크/타이틀/스니펫 반환"""
-    q = f"{gu} {name} {food}"
-    url = f"https://search.naver.com/search.naver?query={quote_plus(q)}"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-    except Exception:
-        return None
+Rules:
+- Do not invent exact addresses or phone numbers.
+- Avoid hard facts like "Michelin 2024" unless very general.
+- Give 5 items max.
+- Mix well-known styles and indie vibes; avoid repeating same vibe.
+- Use Korean (MZ tone) and fun emojis moderately.
+"""
 
-    # 단순 a태그 추출 + 필터링
-    titles, links = [], []
-    for a in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', r.text, flags=re.I|re.S):
-        href, title_html = a
-        title = re.sub("<.*?>", "", title_html)
-        if not title or not href.startswith("http"):
-            continue
-        # 블로그/뉴스/광고 등 섞임 → 상호명 유사도 기반으로 필터
-        ratio = difflib.SequenceMatcher(None, title.lower(), name.lower()).ratio()
-        if ratio >= 0.45 or name.lower() in title.lower():
-            links.append(href)
-            titles.append(title)
-        if len(links) >= 3:
-            break
+def build_user_prompt(gu, food, group_size, budget, vibe, diet, need_reservation, include_chains):
+    return f"""\
+구: {gu}
+키워드(음식): {food}
+인원: {group_size}
+예산: {budget}
+무드: {", ".join(vibe) if vibe else "무관"}
+제한: {", ".join(diet) if diet else "없음"}
+예약 선호: {"예" if need_reservation else "아니오"}
+체인 허용: {"예" if include_chains else "아니오"}
 
-    if not links:
-        return None
-    return {"title": titles[0], "link": links[0]}
+요청:
+- 위 조건을 만족하는 '서울 {gu}' 중심의 맛집 5곳 이내 추천
+- 결과는 반드시 JSON (schema 준수)
+- 각 항목마다 search_query 한 줄 포함 (사용자가 직접 검색해서 검증 가능)
+"""
 
-# 4) OpenAI로 “요약/코멘트”만 생성 (리랭크 허용, 새 가게 생성 금지)
-SYS = """You summarize and lightly re-rank *existing* restaurant candidates.
-Never invent new places. Output Korean, playful but concise."""
-
-def ai_comment(cands, key):
-    if not _openai_ok or not key or not cands:
-        return None
-    client = OpenAI(api_key=key)
-    prompt = {
-        "role":"user",
-        "content":(
-            "아래 후보(이름/출처/검증링크)를 바탕으로 상위 5곳 이내를 한 줄 요약과 함께 추천해줘. "
-            "새 가게를 만들지 말고, 주어진 후보만 재정렬하고 코멘트를 붙여. "
-            "JSON으로만 응답해: [{name, reason, link}].\n\n" + json.dumps(cands, ensure_ascii=False)
-        )
-    }
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"system","content":SYS}, prompt],
-            response_format={"type":"json_object"},
-            temperature=0.3
-        )
-        data = json.loads(resp.choices[0].message.content)
-        return data
-    except Exception:
-        return None
-
-# ============== 실행 ==============
-if go:
-    if not food.strip():
-        st.warning("음식 키워드를 입력해 주세요!")
-        st.stop()
-
-    rows = []
-    # 1) Kakao 우선
-    if KAKAO_KEY:
-        with st.spinner("카카오에서 실데이터 수집 중…"):
-            try:
-                rows = kakao_search_places(KAKAO_KEY, gu, food, size=topk*2)
-            except Exception as e:
-                st.info(f"Kakao 수집 실패(키/쿼터 문제일 수 있어요): {e}")
-
-    # 2) 없으면 OSM 후보
-    if not rows:
-        with st.spinner("키 없이(오픈스트리트맵) 후보 수집 중…"):
-            try:
-                rows = overpass_candidates(gu, food, size=topk)
-            except Exception as e:
-                st.error(f"키 없이 후보 수집 실패: {e}")
-                st.stop()
-
-    # 3) 네이버 웹검색으로 실제 확인 + 링크 부여
-    verified = []
-    with st.spinner("네이버 웹검색으로 실존 검증 중…"):
-        for r in rows:
-            v = naver_web_validate(r["name"], gu, food)
-            if v:
-                r["verified_link"] = v["link"]
-                r["verified_title"] = v["title"]
-                verified.append(r)
-            if len(verified) >= topk:
-                break
-
-    if not verified:
-        st.info("검증된 결과가 없어요 🥲 키워드를 더 넓게 적거나 다른 구를 시도해보세요.")
-        st.stop()
-
-    # 4) OpenAI로 ‘요약/리랭크’ (선택)
-    summary = None
-    if OPENAI_KEY:
-        payload = [{"name": r["name"], "source": r["source"], "link": r.get("verified_link","")} for r in verified]
-        ai = ai_comment(payload, OPENAI_KEY)
-        if ai and isinstance(ai, dict):
-            summary = ai
-
-    # 5) 출력
-    st.success(f"**{gu} · {food}** 실검색 기반 추천 TOP{len(verified)}")
-    cols = ["name","road_address","address","phone","verified_title","verified_link"]
-    show = pd.DataFrame([{k: v for k, v in r.items() if k in cols} for r in verified]) \
-            .rename(columns={"name":"상호명","road_address":"도로명주소","address":"지번주소",
-                             "phone":"전화","verified_title":"검증제목","verified_link":"검증링크"})
-    show.index = range(1, len(show)+1)
-    st.dataframe(show, use_container_width=True)
-
-    for r in verified:
-        link = r.get("verified_link","#")
-        title = r.get("verified_title","")
-        st.markdown(f"**🍽️ {r['name']}**  ·  [{title}]({link})")
-
-    st.write("---")
-    if summary and "items" in summary or isinstance(summary, list):
-        st.subheader("🤖 요약 & 리랭크 (AI)")
+def chat_complete_json(api_key, model, messages, temperature=0.8, max_retries=2):
+    if OpenAI is None:
+        raise RuntimeError("openai 패키지가 필요합니다. requirements.txt에 openai>=1.30 추가하세요.")
+    client = OpenAI(api_key=api_key)
+    last_err = None
+    for _ in range(max_retries):
         try:
-            items = summary.get("items", summary)  # 둘 중 하나 형태
-            for it in items[:topk]:
-                st.markdown(f"- **{it.get('name','')}** — {it.get('reason','')}  🔗 {it.get('link','')}")
-        except Exception:
-            pass
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                response_format={"type": "json_object"},
+            )
+            return json.loads(resp.choices[0].message.content)
+        except Exception as e:
+            last_err = e
+            time.sleep(0.4)
+    raise last_err
 
-    # 다운로드
-    csv = show.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("📥 CSV 다운로드", csv, file_name="realsearch_restaurants.csv", mime="text/csv", use_container_width=True)
+# -------------------------------------------------------------------
+# 3) 채팅 UI
+# -------------------------------------------------------------------
+with st.container():
+    for m in st.session_state.chat:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
 
-else:
-    st.info("구/키워드/개수 정하고 ‘실시간으로 찾기’ 버튼을 눌러주세요! 결과는 실데이터 기반으로만 보여드려요 🙂")
+    user_msg = st.chat_input("원하는 분위기/동네 더 적어줘도 좋아요! (예: '매운 거 좋아' '압구정 쪽')")
+    clicked = st.button("✨ 조건으로 추천 받기", use_container_width=True)
+
+    if user_msg:
+        st.session_state.chat.append({"role": "user", "content": user_msg})
+        with st.chat_message("user"):
+            st.markdown(user_msg)
+
+    if clicked:
+        sys = {"role": "system", "content": SYSTEM_PROMPT}
+        context = {"role": "user", "content": build_user_prompt(
+            gu, food, group_size, budget, vibe, diet, need_reservation, include_chains
+        )}
+        history_tail = st.session_state.chat[-6:] if len(st.session_state.chat) > 6 else st.session_state.chat
+
+        with st.spinner("AI가 조건에 딱 맞는 후보 뽑는 중…😎"):
+            try:
+                data = chat_complete_json(
+                    api_key=api_key,
+                    model=model,
+                    messages=[sys, context] + history_tail,
+                    temperature=temperature,
+                )
+            except Exception as e:
+                with st.chat_message("assistant"):
+                    st.error(f"추천 생성 실패: {e}")
+            else:
+                summary = data.get("summary", "")
+                recs = data.get("recommendations", [])[:5]
+
+                with st.chat_message("assistant"):
+                    if summary:
+                        st.markdown(f"**{summary}**")
+                    if not recs:
+                        st.info("추천 결과가 비었어요. 키워드를 바꿔 다시 시도해볼까요?")
+                    else:
+                        rows = []
+                        for r in recs:
+                            name = r.get("name", "")
+                            area = r.get("area_hint", "")
+                            cat = r.get("category", "")
+                            sig = r.get("signature_menu", "")
+                            price = r.get("price_per_person", "")
+                            why = r.get("fit_reason", "")
+                            tip = r.get("pro_tip", "")
+                            query = r.get("search_query", f"{gu} {food} 맛집")
+
+                            st.markdown(
+                                f"**🍽️ {name}** · {cat} · {area}\n\n"
+                                f"- 시그니처: {sig}\n"
+                                f"- 가격대: {price}\n"
+                                f"- 왜 추천? {why}\n"
+                                f"- 프로팁: {tip}\n"
+                                f"- 🔎 검색어: `{query}`\n"
+                            )
+                            st.divider()
+
+                            rows.append({
+                                "이름": name, "구역힌트": area, "분류": cat,
+                                "시그니처": sig, "1인예산": price,
+                                "추천이유": why, "검색어": query
+                            })
+
+                        df = pd.DataFrame(rows)
+                        st.session_state.last_results = df
+
+                if 'data' in locals():
+                    st.session_state.chat.append({"role": "assistant", "content": summary or "추천 결과가 생성되었습니다."})
+
+# -------------------------------------------------------------------
+# 4) 결과 내보내기 & 초기화
+# -------------------------------------------------------------------
+st.write("---")
+cA, cB, cC = st.columns([1,1,1])
+with cA:
+    if not st.session_state.last_results.empty:
+        csv = st.session_state.last_results.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 추천 결과 CSV 다운로드", csv, file_name="맛집추천.csv", mime="text/csv", use_container_width=True)
+with cB:
+    if st.button("🧹 대화/결과 초기화", use_container_width=True):
+        st.session_state.chat = []
+        st.session_state.last_results = pd.DataFrame()
+        st.rerun()
+with cC:
+    st.info("Tip) ‘검색어’를 복사해서 네이버/카카오 지도에 붙여넣으면 검증이 쉬워요!", icon="💡")
