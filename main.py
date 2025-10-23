@@ -25,7 +25,6 @@ EMOJIS_DRINKS = {
 def load_data():
     """데이터를 불러오고 필요한 술 컬럼 목록을 반환합니다."""
     try:
-        # 파일명은 'food_drink_pairings.csv'로 가정
         df = pd.read_csv("food_drink_pairings.csv")
     except FileNotFoundError:
         st.error("⚠️ food_drink_pairings.csv 파일을 찾을 수 없습니다. 파일을 업로드하거나 경로를 확인하세요.")
@@ -38,13 +37,12 @@ df, DRINKS = load_data()
 
 st.set_page_config(page_title="🍶 음식 & 술 궁합 대시보드", page_icon="🍽️", layout="centered")
 
-# Gemini 클라이언트 초기화 (Streamlit Cloud 환경에서는 API 키가 자동 주입됨)
-# gemini-2.5-flash 모델은 Google Search grounding을 지원합니다.
+# Gemini 클라이언트 초기화 (API 키는 Streamlit Secrets에서 자동 주입)
+client = None
 try:
     client = genai.Client()
 except Exception:
-    st.error("⚠️ Gemini API 클라이언트 초기화에 실패했습니다. Streamlit Cloud 환경인지 확인해 주세요.")
-    client = None
+    st.error("⚠️ Gemini API 클라이언트 초기화에 실패했습니다. Streamlit Secrets에 GEMINI_API_KEY를 설정했는지 확인해 주세요.")
 
 st.title("🍽️ 음식과 술 궁합 시각화 대시보드")
 st.write("분석 방향을 선택하여, 최고의 궁합을 찾고, 추천받은 항목에 맞는 지역 맛집을 검색해 보세요.")
@@ -84,7 +82,7 @@ if analysis_mode == "음식 먼저 (Food First)":
     main_item = food
     chart_title = f"'{main_item}'과(와) 어울리는 술 비율 🍷"
     best_item = chart_df.iloc[0]["항목"]
-    best_item_name = chart_df.iloc[0]["검색어"] # 순수 술 이름
+    best_item_name = chart_df.iloc[0]["검색어"] 
 
 else:
     st.header("🥂 술 기반 최고의 음식 추천")
@@ -104,7 +102,7 @@ else:
     main_item = selected_drink
     chart_title = f"'{main_item}'과(와) 잘 어울리는 음식 ({TOP_N_FOOD}가지) 🍽️"
     best_item = chart_df.iloc[0]["항목"]
-    best_item_name = chart_df.iloc[0]["항목"] # 순수 음식 이름
+    best_item_name = chart_df.iloc[0]["항목"]
 
 # ----------------------------------------------------
 # 2. 공통 Plotly 시각화 로직
@@ -158,7 +156,6 @@ if not chart_df.empty:
         search_button = st.button(f"'{search_query}' 검색하기 🔎", use_container_width=True)
 
     if search_button and client:
-        # LLM에게 맛집 정보를 구조화하도록 요청하는 시스템 프롬프트
         system_prompt = (
             "당신은 서울 지역 맛집 전문 큐레이터입니다. "
             "Google 검색 결과를 바탕으로 가장 인기 있는 맛집 1곳을 선정하여, "
@@ -178,10 +175,15 @@ if not chart_df.empty:
                     )
                 )
 
-                # 결과 저장
+                # --- 오류 수정된 부분: citation_metadata.citations 사용 ---
+                sources = []
+                if response.candidates and response.candidates[0].citation_metadata:
+                    sources = response.candidates[0].citation_metadata.citations
+                # --- 수정 끝 ---
+
                 st.session_state['matjip_result'] = {
                     "text": response.text,
-                    "sources": response.candidates[0].grounding_metadata.grounding_attributions
+                    "sources": sources
                 }
 
             except Exception as e:
@@ -200,8 +202,8 @@ if not chart_df.empty:
         sources_html = []
         if result.get("sources"):
             for source in result["sources"]:
-                # uri와 title을 사용하여 하이퍼링크 생성
-                sources_html.append(f"[{source.web.title}]({source.web.uri})")
+                # citation 객체의 title과 uri 속성을 사용
+                sources_html.append(f"[{source.title}]({source.uri})")
 
             st.markdown(f"**참고 사이트**: {', '.join(sources_html)}")
             
