@@ -30,6 +30,7 @@ EMOJIS_DRINKS = {
 @st.cache_data
 def load_data():
     """데이터를 불러오고 필요한 술 컬럼 목록을 반환합니다."""
+    # 파일명은 사용자 환경에 맞게 조정하세요.
     try:
         df = pd.read_csv("food_drink_pairings.csv")
     except FileNotFoundError:
@@ -77,7 +78,7 @@ if analysis_mode == "음식 먼저 (Food First)":
             "항목": f"{emoji} {d}", 
             "비율": row[d],
             "정렬용_비율": row[d],
-            "검색어": d # 술 이름 (이모지 없이)
+            "검색어": d 
         })
         
     chart_df = pd.DataFrame(chart_data).sort_values("정렬용_비율", ascending=False)
@@ -87,7 +88,7 @@ if analysis_mode == "음식 먼저 (Food First)":
     main_item = food
     chart_title = f"'{main_item}'과(와) 어울리는 술 비율 🍷"
     best_item = chart_df.iloc[0]["항목"]
-    best_item_name = chart_df.iloc[0]["검색어"] # 검색에 사용될 순수 술 이름
+    best_item_name = chart_df.iloc[0]["검색어"] # 순수 술 이름
 
 else:
     st.header("🥂 술 기반 최고의 음식 추천")
@@ -108,7 +109,7 @@ else:
     main_item = selected_drink
     chart_title = f"'{main_item}'과(와) 잘 어울리는 음식 ({TOP_N_FOOD}가지) 🍽️"
     best_item = chart_df.iloc[0]["항목"]
-    best_item_name = chart_df.iloc[0]["항목"] # 검색에 사용될 순수 음식 이름
+    best_item_name = chart_df.iloc[0]["항목"] # 순수 음식 이름
 
 # ----------------------------------------------------
 # 3. 공통 Plotly 시각화 로직
@@ -119,7 +120,6 @@ if not chart_df.empty:
 
     # --- 그래프 출력 ---
     with st.container():
-        # 색상 설정 (1등 빨강 + 그라데이션)
         colors = ["#FF4B4B"] + px.colors.sequential.Oranges[2:len(chart_df)]
         colors = colors[:len(chart_df)]
 
@@ -156,7 +156,7 @@ if not chart_df.empty:
     st.markdown("---")
 
     # ----------------------------------------------------
-    # 4. 지역 맛집 추천 기능 추가
+    # 4. 지역 맛집 추천 기능 추가 (Google 검색 시뮬레이션)
     # ----------------------------------------------------
     
     st.header("📍 지역 맛집 추천")
@@ -169,38 +169,30 @@ if not chart_df.empty:
     search_query = f"{best_item_name} 맛집 {selected_gu}"
     
     with col2:
-        st.markdown(f"<div style='height: 38px;'></div>", unsafe_allow_html=True) # 버튼 위치 맞추기
+        st.markdown(f"<div style='height: 38px;'></div>", unsafe_allow_html=True) 
         search_button = st.button(f"'{search_query}' 검색하기 🔎", use_container_width=True)
 
     if search_button:
         with st.spinner(f"**'{search_query}'** 지역 맛집 정보를 검색 중입니다..."):
             
-            # 검색 결과를 저장할 상태 변수 (Session State 사용 권장)
-            # Streamlit 환경이므로, JavaScript/API 호출 결과를 Python으로 전달받는 코드가 필요
-            # 실제 API 호출을 위한 JavaScript를 HTML 컴포넌트로 삽입하여 결과를 받음
+            # --- Google Search API 시뮬레이션 ---
+            # 실제 API 호출 대신, 검색어에 맞는 가상의 추천 결과를 생성합니다.
             
-            # LLM API 호출을 위한 JS 코드 생성 및 실행
-            js_code = generate_llm_js_code(search_query)
-            
-            # Streamlit 컴포넌트를 사용하여 JS 실행 (비동기 결과는 st.session_state에 저장될 것을 가정)
-            # 여기서는 API 응답을 시뮬레이션하고, 실제 환경에서는 아래 JS 코드가 실행됩니다.
-            # *주의: Streamlit 파일 내에서 외부 LLM API 호출은 이와 같은 JS 삽입을 통해 이루어져야 합니다.*
-            html(js_code, height=0, width=0) # 숨겨진 컴포넌트
+            # 시뮬레이션 데이터 정의
+            simulated_text = f"""
+            1. **가게 이름**: {selected_gu}의 {best_item_name} 명가
+            2. **대표메뉴**: 최고의 {best_item_name} 요리
+            3. **간단 후기**: "궁합 아이템인 '{main_item}'와 함께 먹으니 풍미가 두 배! 재료가 신선하고 맛이 깔끔합니다."
+            4. **가장 가까운 지하철역**: {selected_gu}청역 (9호선) 또는 가까운 역 이름
+            """
+            simulated_sources = [
+                {"uri": f"https://www.example.com/matjip/{selected_gu}", "title": f"'{selected_gu} {best_item_name}' 맛집 정보"},
+                {"uri": f"https://www.example.com/review/{best_item_name}", "title": f"'{best_item_name}' 추천 후기 블로그"}
+            ]
 
-            # 실제 환경에서 API 응답을 기다리는 동안 로딩 상태 유지
-            # 데모를 위해 임시로 결과 시뮬레이션
-            
-            # --- API 결과 시뮬레이션 (실제 사용 시 LLM 응답으로 대체됨) ---
             st.session_state['matjip_result'] = {
-                "text": """
-                    1. **가게 이름**: 진미식당
-                    2. **대표메뉴**: 간장게장 정식
-                    3. **간단 후기**: "비빔밥과 찰떡궁합! 밥도둑 간장게장이 짜지 않고 감칠맛이 최고예요."
-                    4. **가장 가까운 지하철역**: 공덕역 (5호선, 6호선)
-                """,
-                "sources": [
-                    {"uri": "https://www.example.com/jinmi", "title": "공덕동 진미식당 공식 정보"}
-                ]
+                "text": simulated_text,
+                "sources": simulated_sources
             }
             # --- 시뮬레이션 끝 ---
 
@@ -209,7 +201,7 @@ if not chart_df.empty:
         
         st.subheader(f"✨ '{search_query}' 추천 결과")
 
-        # 1. LLM이 생성한 구조화된 텍스트 출력
+        # 1. 구조화된 텍스트 출력
         st.markdown(result["text"])
         
         # 2. 참고 사이트 (Grounding Source) 출력
@@ -222,132 +214,4 @@ if not chart_df.empty:
             st.markdown(f"**참고 사이트**: {', '.join(sources_html)}", unsafe_allow_html=True)
             
         st.markdown("---")
-        st.info("⚠️ 상기 정보는 Gemini API의 Google 검색 결과를 기반으로 추출된 것입니다. 실제 방문 전 영업 정보와 위치를 꼭 확인하세요.")
-
-
-# ----------------------------------------------------
-# 5. LLM API 호출을 위한 JavaScript 코드 생성 함수
-# ----------------------------------------------------
-
-def generate_llm_js_code(query):
-    """
-    Google Search를 사용하여 맛집 정보를 추출하고, 결과를 Streamlit Session State로 반환하는
-    JavaScript 코드를 생성합니다. (HTML 컴포넌트 내에서 실행됨)
-    """
-    
-    # LLM에게 맛집 정보를 구조화하도록 요청하는 시스템 프롬프트
-    system_prompt = (
-        "당신은 서울 지역 맛집 전문 큐레이터입니다. "
-        "제공된 검색 결과를 바탕으로 가장 인기 있는 맛집 1곳을 선정하여, "
-        "가게 이름, 대표메뉴, 간단 후기(1줄 이내), 가장 가까운 지하철역 정보를 순서대로 번호 목록(예: '1. 가게 이름:', '2. 대표메뉴:')으로 정리하여 한국어로 출력하세요. "
-        "추가적인 서론이나 결론 문구 없이 오직 목록 형식의 결과만 제공하세요."
-    )
-    
-    # LLM API 요청 페이로드
-    payload = {
-        "contents": [{"parts": [{"text": query}]}],
-        "tools": [{"google_search": {}}],
-        "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "model": "gemini-2.5-flash-preview-09-2025"
-    }
-
-    # 페이로드를 Base64로 인코딩하여 JS 코드에 삽입
-    payload_str = json.dumps(payload)
-    encoded_payload = base64.b64encode(payload_str.encode('utf-8')).decode('utf-8')
-
-    js_script = f"""
-    <script>
-        // 이 함수는 Streamlit의 Custom Component 환경에서 실행됩니다.
-        async function fetchMatjip() {{
-            const apiKey = ""; // Canvas 환경에서 자동 제공됨
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${{apiKey}}`;
-            const maxRetries = 5;
-            let currentDelay = 1000; // 1 second
-
-            const encodedPayload = '{encoded_payload}';
-            const payload = JSON.parse(atob(encodedPayload));
-            
-            let result = null;
-            let sources = [];
-            let error = null;
-
-            for (let i = 0; i < maxRetries; i++) {{
-                try {{
-                    const response = await fetch(apiUrl, {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify(payload)
-                    }});
-                    
-                    if (response.status === 429) {{ // Rate Limit hit
-                        await new Promise(resolve => setTimeout(resolve, currentDelay));
-                        currentDelay *= 2; // Exponential Backoff
-                        continue;
-                    }}
-                    
-                    if (!response.ok) {{
-                        throw new Error(`API call failed with status: ${{response.status}}`);
-                    }}
-
-                    const jsonResult = await response.json();
-                    
-                    const candidate = jsonResult.candidates?.[0];
-                    if (candidate && candidate.content?.parts?.[0]?.text) {{
-                        result = candidate.content.parts[0].text;
-                        
-                        // Extract grounding sources
-                        const groundingMetadata = candidate.groundingMetadata;
-                        if (groundingMetadata && groundingMetadata.groundingAttributions) {{
-                            sources = groundingMetadata.groundingAttributions
-                                .map(attribution => ({{
-                                    uri: attribution.web?.uri,
-                                    title: attribution.web?.title,
-                                }}))
-                                .filter(source => source.uri && source.title); 
-                        }}
-                        
-                        break; // Success
-                    }} else {{
-                        result = "정보 추출에 실패했습니다. 검색 결과를 찾을 수 없습니다.";
-                        break;
-                    }}
-                }} catch (e) {{
-                    error = e.message;
-                    await new Promise(resolve => setTimeout(resolve, currentDelay));
-                    currentDelay *= 2; 
-                }}
-            }}
-            
-            // 결과를 Streamlit에게 다시 전달
-            if (window.parent) {{
-                window.parent.postMessage({{
-                    type: 'streamlit:setComponentValue',
-                    value: {{ matjip_result: {{ text: result || `에러 발생: ${{error}}`, sources: sources }} }}
-                }}, '*');
-            }}
-        }}
-
-        // Streamlit에서 'matjip_result'라는 키로 결과를 받을 수 있도록 리스너 설정
-        window.addEventListener('message', event => {{
-            if (event.data.type === 'streamlit:render') {{
-                // Streamlit 컴포넌트가 렌더링될 때만 API 호출 (무한 루프 방지)
-                if ({search_button}) {{ // Python의 search_button 상태를 반영
-                    fetchMatjip();
-                }}
-            }}
-        }});
-    </script>
-    """
-    
-    # Streamlit으로 결과를 다시 전달받기 위한 리스너 (Python side)
-    st.session_state['matjip_result'] = st.session_state.get('matjip_result')
-    
-    return js_script
-
-
-### 🔍 사용 설명 및 참고 사항
-
-1.  **실시간 검색**: 이 코드는 **"'{최적의 궁합 항목}' 맛집 '{선택된 구}'"** 쿼리를 구성하여 `Gemini API`의 `Google Search grounding` 도구를 사용하여 실시간으로 정보를 검색합니다.
-2.  **구조화된 정보**: API는 검색된 정보를 바탕으로 가게 이름, 대표메뉴, 간단 후기, 지하철역 정보를 추출하여 깔끔하게 정리해 출력합니다.
-3.  **참고 사이트**: Google Search의 출처(Sources) 정보는 "참고 사이트" 항목에 링크와 제목 형태로 표시됩니다.
-4.  **실행 환경**: 이 코드는 Streamlit Cloud 환경에서 `__app_id` 등의 전역 변수와 `st.components.v1.html`을 통한 비동기 JavaScript 실행을 가정하고 작성되었습니다.
+        st.info("⚠️ 상기 정보는 Streamlit 환경에서 Google 검색을 시뮬레이션한 결과입니다. 실제 방문 전 영업 정보와 위치를 꼭 확인하세요.")
