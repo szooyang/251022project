@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+# --- Streamlit 설정 ---
+st.set_page_config(page_title="🍶 음식과 술 궁합 시각화", page_icon="🍽️", layout="centered")
+
 # --- 데이터 불러오기 ---
 @st.cache_data
 def load_data():
@@ -10,7 +13,26 @@ def load_data():
 
 df = load_data()
 
-st.set_page_config(page_title="🍶 음식과 술 궁합 시각화", page_icon="🍽️", layout="centered")
+# --- 이미지 URL (무료 오픈소스 아이콘) ---
+icons = {
+    "소주": "https://cdn-icons-png.flaticon.com/512/812/812849.png",
+    "맥주": "https://cdn-icons-png.flaticon.com/512/2738/2738730.png",
+    "와인": "https://cdn-icons-png.flaticon.com/512/3534/3534033.png",
+    "막걸리": "https://cdn-icons-png.flaticon.com/512/706/706164.png",
+    "위스키": "https://cdn-icons-png.flaticon.com/512/1046/1046751.png",
+    "칵테일": "https://cdn-icons-png.flaticon.com/512/861/861210.png",
+    "사케": "https://cdn-icons-png.flaticon.com/512/1248/1248795.png"
+}
+
+emojis = {
+    "소주": "🍶",
+    "맥주": "🍺",
+    "와인": "🍷",
+    "막걸리": "🥛",
+    "위스키": "🥃",
+    "칵테일": "🍸",
+    "사케": "🍶"
+}
 
 # --- 제목 ---
 st.title("🍽️ 음식과 술 궁합 시각화 대시보드")
@@ -22,19 +44,19 @@ food = st.selectbox("대표 음식을 선택하세요:", df["대표음식"].uniq
 # --- 선택한 음식 데이터 필터링 ---
 row = df[df["대표음식"] == food].iloc[0]
 drinks = ["소주", "맥주", "와인", "막걸리", "위스키", "칵테일", "사케"]
-emojis = ["🍶", "🍺", "🍷", "🥛", "🥃", "🍸", "🍶"]
 
-# --- 이모지와 함께 데이터 구성 ---
+# --- 데이터 구성 ---
 chart_df = pd.DataFrame({
-    "술": [f"{emoji} {drink}" for emoji, drink in zip(emojis, drinks)],
-    "비율": [row[d] for d in drinks]
+    "술": [f"{emojis[d]} {d}" for d in drinks],
+    "비율": [row[d] for d in drinks],
+    "아이콘": [icons[d] for d in drinks]
 }).sort_values("비율", ascending=False)
 
-# --- 색상 설정 (1등 빨강 + 그라데이션) ---
+# --- 색상 설정 ---
 colors = ["#FF4B4B"] + px.colors.sequential.Oranges[len(chart_df) - 1:]
 colors = colors[:len(chart_df)]
 
-# --- Plotly 막대그래프 ---
+# --- Plotly 그래프 ---
 fig = px.bar(
     chart_df,
     x="술",
@@ -62,7 +84,16 @@ fig.update_layout(
 # --- 그래프 출력 ---
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 부가 정보 ---
-best = chart_df.iloc[0]["술"]
-st.markdown(f"🥇 **'{food}'에는 {best}가(이) 가장 잘 어울립니다!**")
+# --- 1등 술 표시 ---
+best = chart_df.iloc[0]
+st.markdown(f"🥇 **'{food}'에는 {best['술']}이(가) 가장 잘 어울립니다!**")
+
+# --- 이미지 표시 ---
+st.subheader("🍸 술 아이콘 보기")
+cols = st.columns(len(chart_df))
+for i, (_, row_) in enumerate(chart_df.iterrows()):
+    with cols[i]:
+        st.image(row_["아이콘"], width=60)
+        st.caption(row_["술"])
+
 st.markdown("💡 *Tip: 막대 위를 클릭하면 다른 술과 비교하거나 확대해볼 수 있습니다.*")
