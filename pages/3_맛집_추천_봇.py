@@ -1,7 +1,6 @@
 # pages/3_맛집_추천_봇.py
 import json
 import time
-import uuid
 import pandas as pd
 import streamlit as st
 
@@ -13,19 +12,23 @@ except Exception:
 
 st.set_page_config(page_title="맛집 추천 봇", page_icon="🤖", layout="wide")
 st.title("🤖 맛집 추천 봇 — OpenAI 키만 있으면 바로 GO!")
-st.caption("키워드와 취향 입력 → AI가 동네/음식/무드 맞춰 맛집 아이디어를 뽑아줘요. (실시간 크롤링 X, 아이디어/초안 용)")
+st.caption("키워드와 취향 입력 → AI가 동네/음식/무드 맞춘 맛집 아이디어를 뽑아줘요. (실시간 크롤링 X, 아이디어/초안 용)")
 
 # -------------------------------------------------------------------
-# 0) OpenAI 키 받기 (secrets 우선, 입력 칸 보조)
+# 0) OpenAI 키: 시크릿에서만 읽기 (입력칸 제거)
 # -------------------------------------------------------------------
-DEFAULT_MODEL = "gpt-4o-mini"  # 경량/저비용 추천
-secret_key = st.secrets.get("OPENAI_API_KEY", "")
-api_key = st.text_input("🔑 OpenAI API Key", type="password", value=secret_key, key="openai_key_input")
+DEFAULT_MODEL = "gpt-4o-mini"
+api_key = st.secrets.get("OPENAI_API_KEY", "")
+
+if not api_key:
+    st.error("OpenAI API 키가 설정되어 있지 않습니다. Streamlit Secrets에 `OPENAI_API_KEY`를 추가해주세요.")
+    st.stop()
+
 model = st.selectbox("모델 선택", [DEFAULT_MODEL, "gpt-4o", "gpt-4.1-mini"], index=0, key="model_select")
 temperature = st.slider("창의성(temperature)", 0.0, 1.2, 0.8, 0.1, key="temp_slider")
 
 if "chat" not in st.session_state:
-    st.session_state.chat = []  # [{"role":"user"/"assistant","content":"..."}]
+    st.session_state.chat = []
 if "last_results" not in st.session_state:
     st.session_state.last_results = pd.DataFrame()
 
@@ -65,7 +68,7 @@ with st.expander("🎛️ 추천 조건 세팅", expanded=True):
 st.write("---")
 
 # -------------------------------------------------------------------
-# 2) 시스템 프롬프트 (구조화 JSON으로 결과 받기)
+# 2) 시스템 프롬프트 (구조화 JSON)
 # -------------------------------------------------------------------
 SYSTEM_PROMPT = """\
 You are a restaurant recommendation assistant for Seoul. You do NOT browse the web.
@@ -84,8 +87,7 @@ Respond STRICTLY as compact JSON with this schema:
       "fit_reason": "why this matches constraints (Korean, casual MZ tone)",
       "pro_tip": "ordering/seat/wait tips (Korean, short)",
       "search_query": "네이버/카카오에서 찾기 좋게 만든 한 줄 검색어"
-    },
-    ...
+    }
   ]
 }
 
@@ -115,12 +117,8 @@ def build_user_prompt(gu, food, group_size, budget, vibe, diet, need_reservation
 """
 
 def chat_complete_json(api_key, model, messages, temperature=0.8, max_retries=2):
-    """OpenAI ChatCompletion 호출 후 JSON 파싱. 실패 시 재시도."""
-    if not api_key:
-        raise RuntimeError("OpenAI API Key가 필요합니다.")
     if OpenAI is None:
-        raise RuntimeError("openai 패키지가 설치되어 있어야 합니다. requirements.txt에 openai>=1.0 포함하세요.")
-
+        raise RuntimeError("openai 패키지가 필요합니다. requirements.txt에 openai>=1.30 추가하세요.")
     client = OpenAI(api_key=api_key)
     last_err = None
     for _ in range(max_retries):
@@ -129,25 +127,22 @@ def chat_complete_json(api_key, model, messages, temperature=0.8, max_retries=2)
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
             )
-            txt = resp.choices[0].message.content
-            return json.loads(txt)
+            return json.loads(resp.choices[0].message.content)
         except Exception as e:
             last_err = e
-            time.sleep(0.5)
+            time.sleep(0.4)
     raise last_err
 
 # -------------------------------------------------------------------
 # 3) 채팅 UI
 # -------------------------------------------------------------------
 with st.container():
-    # 기존 대화 렌더
     for m in st.session_state.chat:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
 
-    # 사용자 입력
     user_msg = st.chat_input("원하는 분위기/동네 더 적어줘도 좋아요! (예: '매운 거 좋아' '압구정 쪽')")
     clicked = st.button("✨ 조건으로 추천 받기", use_container_width=True)
 
@@ -157,81 +152,68 @@ with st.container():
             st.markdown(user_msg)
 
     if clicked:
-        if not api_key:
-            st.warning("OpenAI API 키를 입력해 주세요. (Secrets 또는 상단 입력칸)")
-        else:
-            # 시스템 + 컨텍스트 + 대화 일부를 보냄 (최근 6턴까지만)
-            sys = {"role": "system", "content": SYSTEM_PROMPT}
-            context = {"role": "user", "content": build_user_prompt(
-                gu, food, group_size, budget, vibe, diet, need_reservation, include_chains
-            )}
-            history_tail = st.session_state.chat[-6:] if len(st.session_state.chat) > 6 else st.session_state.chat
+        sys = {"role": "system", "content": SYSTEM_PROMPT}
+        context = {"role": "user", "content": build_user_prompt(
+            gu, food, group_size, budget, vibe, diet, need_reservation, include_chains
+        )}
+        history_tail = st.session_state.chat[-6:] if len(st.session_state.chat) > 6 else st.session_state.chat
 
-            with st.spinner("AI가 코시국 감성으로 맛집 뽑는 중…😎"):
-                try:
-                    data = chat_complete_json(
-                        api_key=api_key,
-                        model=model,
-                        messages=[sys, context] + history_tail,
-                        temperature=temperature
-                    )
-                except Exception as e:
-                    with st.chat_message("assistant"):
-                        st.error(f"추천 생성 실패: {e}")
-                else:
-                    # JSON 결과 표시
-                    summary = data.get("summary", "")
-                    recs = data.get("recommendations", [])[:5]
+        with st.spinner("AI가 조건에 딱 맞는 후보 뽑는 중…😎"):
+            try:
+                data = chat_complete_json(
+                    api_key=api_key,
+                    model=model,
+                    messages=[sys, context] + history_tail,
+                    temperature=temperature,
+                )
+            except Exception as e:
+                with st.chat_message("assistant"):
+                    st.error(f"추천 생성 실패: {e}")
+            else:
+                summary = data.get("summary", "")
+                recs = data.get("recommendations", [])[:5]
 
-                    # 채팅 말풍선
-                    with st.chat_message("assistant"):
-                        if summary:
-                            st.markdown(f"**{summary}**")
-                        if not recs:
-                            st.info("추천 결과가 비었어요. 키워드를 바꿔 다시 시도해볼까요?")
-                        else:
-                            # 표와 카드형 모두 제공
-                            rows = []
-                            for r in recs:
-                                name = r.get("name", "")
-                                area = r.get("area_hint", "")
-                                cat = r.get("category", "")
-                                sig = r.get("signature_menu", "")
-                                price = r.get("price_per_person", "")
-                                why = r.get("fit_reason", "")
-                                tip = r.get("pro_tip", "")
-                                query = r.get("search_query", f"{gu} {food} 맛집")
+                with st.chat_message("assistant"):
+                    if summary:
+                        st.markdown(f"**{summary}**")
+                    if not recs:
+                        st.info("추천 결과가 비었어요. 키워드를 바꿔 다시 시도해볼까요?")
+                    else:
+                        rows = []
+                        for r in recs:
+                            name = r.get("name", "")
+                            area = r.get("area_hint", "")
+                            cat = r.get("category", "")
+                            sig = r.get("signature_menu", "")
+                            price = r.get("price_per_person", "")
+                            why = r.get("fit_reason", "")
+                            tip = r.get("pro_tip", "")
+                            query = r.get("search_query", f"{gu} {food} 맛집")
 
-                                st.markdown(
-                                    f"**🍽️ {name}** · {cat} · {area}\n\n"
-                                    f"- 시그니처: {sig}\n"
-                                    f"- 가격대: {price}\n"
-                                    f"- 왜 추천? {why}\n"
-                                    f"- 프로팁: {tip}\n"
-                                    f"- 🔎 검색어: `{query}`\n"
-                                )
-                                st.divider()
+                            st.markdown(
+                                f"**🍽️ {name}** · {cat} · {area}\n\n"
+                                f"- 시그니처: {sig}\n"
+                                f"- 가격대: {price}\n"
+                                f"- 왜 추천? {why}\n"
+                                f"- 프로팁: {tip}\n"
+                                f"- 🔎 검색어: `{query}`\n"
+                            )
+                            st.divider()
 
-                                rows.append({
-                                    "이름": name,
-                                    "구역힌트": area,
-                                    "분류": cat,
-                                    "시그니처": sig,
-                                    "1인예산": price,
-                                    "추천이유": why,
-                                    "검색어": query
-                                })
+                            rows.append({
+                                "이름": name, "구역힌트": area, "분류": cat,
+                                "시그니처": sig, "1인예산": price,
+                                "추천이유": why, "검색어": query
+                            })
 
-                            df = pd.DataFrame(rows)
-                            st.session_state.last_results = df
+                        df = pd.DataFrame(rows)
+                        st.session_state.last_results = df
 
-            # 모델 응답을 대화에도 반영(요약만 저장)
-            if 'data' in locals():
-                pretty = data.get("summary", "추천 결과가 생성되었습니다.")
-                st.session_state.chat.append({"role": "assistant", "content": pretty})
+                if 'data' in locals():
+                    st.session_state.chat.append({"role": "assistant", "content": summary or "추천 결과가 생성되었습니다."})
 
 # -------------------------------------------------------------------
-# 4) 결과 내보내기 & 프리셋
+# 4) 결과 내보내기 & 초기화
 # -------------------------------------------------------------------
 st.write("---")
 cA, cB, cC = st.columns([1,1,1])
